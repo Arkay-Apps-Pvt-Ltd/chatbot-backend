@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from schemas import ContactCreate, ContactUpdate, ContactRead
-from app.api.v1.crud import contacts as contact_crud
+from app.crud import contacts as contact_crud
 
 
 # Dependency to get DB session per request

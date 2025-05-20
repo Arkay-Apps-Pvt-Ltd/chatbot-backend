@@ -12,7 +12,7 @@ from schemas import MessageCreate, ChatItemSchema
 import os
 import httpx
 from uuid import uuid4
-from app.api.v1.crud import message as crud_message
+from app.crud import message as crud_message
 from models import Contact, Message
 from sqlalchemy import desc, and_, or_, func
 from dependency import get_current_user

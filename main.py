@@ -1,10 +1,10 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1.auth import router as auth_route
-from app.api.v1.message import router as message_route
-from app.api.v1.tags import router as tag_route
-from app.api.v1.contact import router as contact_route
-from app.api.v1.webhook import router as webhook_route
+from app.api.auth import router as auth_route
+from app.api.message import router as message_route
+from app.api.tags import router as tag_route
+from app.api.contact import router as contact_route
+from app.api.webhook import router as webhook_route
 from dependency import get_current_user
 
 app = FastAPI()
@@ -21,8 +21,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth_route, prefix="/v1")
-app.include_router(tag_route, prefix="/v1", dependencies=[Depends(get_current_user)])
-app.include_router(contact_route, prefix="/v1", dependencies=[Depends(get_current_user)])
-app.include_router(message_route, prefix="/v1", dependencies=[Depends(get_current_user)])
+app.include_router(auth_route)
+app.include_router(tag_route, dependencies=[Depends(get_current_user)])
+app.include_router(contact_route, dependencies=[Depends(get_current_user)])
+app.include_router(message_route, dependencies=[Depends(get_current_user)])
 app.include_router(webhook_route)

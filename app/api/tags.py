@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from schemas import TagCreate, TagRead, TagStatusUpdate
-from app.api.v1.crud import tags
+from app.crud import tags
 
 
 # Dependency to get DB session per request
