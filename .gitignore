@@ -1,0 +1,53 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual environment
+venv/
+.env
+.env.*
+
+# FastAPI specific
+instance/
+*.db
+*.sqlite3
+*.log
+
+# Configuration files
+config.py
+config_local.py
+
+# VS Code settings
+.vscode/
+
+# Pytest cache
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Docker
+*.pid
+
+# System files
+.DS_Store
+Thumbs.db
