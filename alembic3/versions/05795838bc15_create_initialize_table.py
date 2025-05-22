@@ -60,7 +60,6 @@ def upgrade() -> None:
     sa.Column('sender_id', sa.Integer(), nullable=True),
     sa.Column('receiver_id', sa.Integer(), nullable=True),
     sa.Column('content', sa.Text(), nullable=True),
-    sa.Column('attachment_url', sa.String(length=255), nullable=True),
     sa.Column('is_delivered', sa.Boolean(), nullable=True),
     sa.Column('is_read', sa.Boolean(), nullable=True),
     sa.Column('timestamp', sa.DateTime(), nullable=True),

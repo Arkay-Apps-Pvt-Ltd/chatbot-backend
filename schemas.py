@@ -16,6 +16,7 @@ class UserOut(BaseModel):
     first_name: str
     last_name: str | None = None
     email: str
+    contact_id: int | None = None
 
     class Config:
         from_attributes = True
@@ -33,16 +34,18 @@ class LoginResponse(BaseModel):
     user: UserOut
 
 
+# Client input (only content)
 class MessageCreate(BaseModel):
-    sender_id: int | None = None
-    receiver_id: int
     content: str
-    attachment_url: str | None = None
 
+# Internal/full data used when saving to DB
+class MessageBase(MessageCreate):
+    sender_id: int
+    receiver_id: int
 
 class TagBase(BaseModel):
     name: str
-    status: bool
+    status: bool = True
 
 
 class TagCreate(TagBase):

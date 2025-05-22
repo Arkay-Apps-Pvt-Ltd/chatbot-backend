@@ -1,17 +1,17 @@
 from sqlalchemy.orm import Session
 from models import Message
-from schemas import MessageCreate
+from schemas import MessageBase
 from typing import List
 
 
 def get_chat_messages(
-    db: Session, user1_id: int, user2_id: int, skip: int = 0, limit: int = 50
+    db: Session, sender_id: int, receiver_id: int, skip: int = 0, limit: int = 50
 ) -> List[Message]:
     return (
         db.query(Message)
         .filter(
-            ((Message.sender_id == user1_id) & (Message.receiver_id == user2_id))
-            | ((Message.sender_id == user2_id) & (Message.receiver_id == user1_id))
+            ((Message.sender_id == sender_id) & (Message.receiver_id == receiver_id))
+            | ((Message.sender_id == receiver_id) & (Message.receiver_id == sender_id))
         )
         .order_by(Message.timestamp.desc())
         .offset(skip)
@@ -20,12 +20,11 @@ def get_chat_messages(
     )
 
 
-def create_message(db: Session, message: MessageCreate) -> Message:
+def create_message(db: Session, message: MessageBase) -> Message:
     db_message = Message(
         sender_id=message.sender_id,
         receiver_id=message.receiver_id,
-        content=message.content,
-        attachment_url=message.attachment_url,
+        content=message.content
     )
     db.add(db_message)
     db.commit()

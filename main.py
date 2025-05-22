@@ -5,6 +5,7 @@ from app.api.message import router as message_route
 from app.api.tags import router as tag_route
 from app.api.contact import router as contact_route
 from app.api.webhook import router as webhook_route
+from app.websocket import router as websocket
 from dependency import get_current_user
 
 app = FastAPI()
@@ -26,3 +27,4 @@ app.include_router(tag_route, dependencies=[Depends(get_current_user)])
 app.include_router(contact_route, dependencies=[Depends(get_current_user)])
 app.include_router(message_route, dependencies=[Depends(get_current_user)])
 app.include_router(webhook_route)
+app.include_router(websocket)

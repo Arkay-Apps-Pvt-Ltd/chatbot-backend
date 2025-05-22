@@ -1,55 +1,22 @@
-from fastapi import (
-    APIRouter,
-    Depends,
-    HTTPException,
-    Query,
-    File,
-    UploadFile,
-)
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from database import SessionLocal
-from schemas import MessageCreate, ChatItemSchema
-import os
-import httpx
-from uuid import uuid4
+from database import get_db
+from schemas import MessageCreate, ChatItemSchema, MessageBase
 from app.crud import message as crud_message
 from models import Contact, Message
 from sqlalchemy import desc, and_, or_, func
-from dependency import get_current_user
+from app.auth.dependencies import get_current_user
 from datetime import datetime, timedelta
+from utils import format_time
+import httpx
 import json
 
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-router = APIRouter(tags=["Messages"], prefix="/messages")
+router = APIRouter(tags=["Messages"])
 
 
-def format_time(dt: datetime) -> str:
-    if not dt:
-        return None
-    now = datetime.utcnow()
-    if dt.date() == now.date():
-        return dt.strftime("%I:%M %p")
-    elif (now.date() - dt.date()).days == 1:
-        return "Yesterday"
-    elif (now - dt).days < 7:
-        return dt.strftime("%A")  # Monday, etc.
-    else:
-        return dt.strftime("%m/%d/%y")
-
-
-# Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-@router.get("/contacts", response_model=list[ChatItemSchema])
-def get_chat_contacts(
+@router.get("/conversations", response_model=list[ChatItemSchema])
+def get_conversations(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -129,9 +96,9 @@ def get_chat_contacts(
     return chat_items
 
 
-@router.get("/history/{other_contact_id}")
+@router.get("/conversations/{receiver_id}/messages")
 def get_chat_history(
-    other_contact_id: int,
+    receiver_id: int,
     skip: int = Query(0),
     limit: int = Query(50),
     db: Session = Depends(get_db),
@@ -140,38 +107,36 @@ def get_chat_history(
     """
     Get chat message history between current user and another contact.
     """
-    current_contact_id = current_user.contact_id
+    sender_id = current_user.contact_id
 
     messages = crud_message.get_chat_messages(
-        db, current_contact_id, other_contact_id, skip, limit
+        db, sender_id, receiver_id, skip, limit
     )
 
     return [
         {
             "id": msg.id,
-            "timestamp": msg.timestamp,
-            "sender_id": msg.sender_id,
-            "receiver_id": msg.receiver_id,
             "content": msg.content,
-            "attachment_url": (
-                msg.attachment_url if hasattr(msg, "attachment_url") else None
-            ),
+            "is_delivered": msg.is_delivered,
+            "is_read": msg.is_read,
+            "direction": "sent" if msg.sender_id == sender_id else "received",
+            "timestamp": msg.timestamp.isoformat(),
         }
-        for msg in reversed(messages)  # ascending order by timestamp
+        for msg in reversed(messages)  # ascending order
     ]
 
 
-@router.post("/send")
+@router.post("/conversations/{receiver_id}/send")
 def send_message(
+    receiver_id: int,
     message: MessageCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    sender_contact_id = current_user.contact_id
-    message.sender_id = sender_contact_id
+    sender_id = current_user.contact_id
 
     # Fetch receiver contact to get their number
-    receiver_contact = db.query(Contact).filter_by(id=message.receiver_id).first()
+    receiver_contact = db.query(Contact).filter_by(id=receiver_id).first()
     if not receiver_contact:
         raise HTTPException(status_code=404, detail="Receiver contact not found")
 
@@ -199,35 +164,23 @@ def send_message(
         raise HTTPException(status_code=502, detail=f"Gupshup error: {e.response.text}")
 
     # Save message to DB after successful API send
-    db_message = crud_message.create_message(db, message)
+
+    full_message_data = MessageBase(
+        **message.dict(), sender_id=sender_id, receiver_id=receiver_id
+    )
+    db_message = crud_message.create_message(db, full_message_data)
 
     return {
         "id": db_message.id,
-        "timestamp": db_message.timestamp,
-        "sender_id": db_message.sender_id,
-        "receiver_id": db_message.receiver_id,
         "content": db_message.content,
-        "attachment_url": getattr(db_message, "attachment_url", None),
-        "gupshup_response": response.json(),
+        "is_delivered": db_message.is_delivered,
+        "is_read": db_message.is_read,
+        "direction": "sent" if db_message.sender_id == sender_id else "received",
+        "timestamp": db_message.timestamp.isoformat(),
     }
 
 
-@router.post("/upload-file")
-async def upload_file(file: UploadFile = File(...)):
-    """
-    Upload a file and return its URL.
-    """
-    filename = f"{uuid4()}_{file.filename}"
-    filepath = os.path.join(UPLOAD_DIR, filename)
-
-    with open(filepath, "wb") as buffer:
-        buffer.write(await file.read())
-
-    # Adjust URL depending on your server config
-    return {"url": f"/{UPLOAD_DIR}/{filename}"}
-
-
-@router.post("/mark-delivered/{msg_id}")
+@router.get("/conversations/{msg_id}/mark-delivered")
 def mark_message_delivered(msg_id: int, db: Session = Depends(get_db)):
     """
     Mark a message as delivered.
@@ -238,7 +191,7 @@ def mark_message_delivered(msg_id: int, db: Session = Depends(get_db)):
     return {"status": "delivered", "message_id": msg_id}
 
 
-@router.post("/mark-read/{msg_id}")
+@router.get("/conversations/{msg_id}/mark-read")
 def mark_message_read(msg_id: int, db: Session = Depends(get_db)):
     """
     Mark a message as read.

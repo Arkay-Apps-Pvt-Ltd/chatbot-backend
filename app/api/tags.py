@@ -14,15 +14,15 @@ def get_db():
         db.close()
 
 
-router = APIRouter(prefix="/tags", tags=["Tags"])
+router = APIRouter(tags=["Tags"])
 
 
-@router.get("/", response_model=list[TagRead])
+@router.get("/tags", response_model=list[TagRead])
 def read_tags(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     return tags.get_all_tags(db, skip=skip, limit=limit)
 
 
-@router.post("/", response_model=TagRead)
+@router.post("/tags", response_model=TagRead)
 def create_tag(tag: TagCreate, db: Session = Depends(get_db)):
     existing = tags.get_tag_by_name(db, tag.name)
     if existing:
@@ -30,7 +30,7 @@ def create_tag(tag: TagCreate, db: Session = Depends(get_db)):
     return tags.create_tag(db, tag)
 
 
-@router.get("/{tag_id}", response_model=TagRead)
+@router.get("/tags/{tag_id}", response_model=TagRead)
 def read_tag(tag_id: int, db: Session = Depends(get_db)):
     tag = tags.get_tag(db, tag_id)
     if not tag:
@@ -38,7 +38,7 @@ def read_tag(tag_id: int, db: Session = Depends(get_db)):
     return tag
 
 
-@router.put("/{tag_id}", response_model=TagRead)
+@router.put("/tags/{tag_id}", response_model=TagRead)
 def update_tag(tag_id: int, tag: TagCreate, db: Session = Depends(get_db)):
     db_tag = tags.get_tag(db, tag_id)
     if not db_tag:
@@ -47,7 +47,7 @@ def update_tag(tag_id: int, tag: TagCreate, db: Session = Depends(get_db)):
     return db_tag
 
 
-@router.get("/{tag_id}/update-status")
+@router.get("/tags/{tag_id}/update-status")
 def update_tag_status(
     tag_id: int,
     status: bool = Query(..., description="New status for the tag"),
@@ -60,7 +60,7 @@ def update_tag_status(
     return db_tag
 
 
-@router.delete("/{tag_id}", response_model=TagRead)
+@router.delete("/tags/{tag_id}", response_model=TagRead)
 def delete_tag(tag_id: int, db: Session = Depends(get_db)):
     tag = tags.delete_tag(db, tag_id)
     if not tag:

@@ -71,7 +71,6 @@ class Message(Base, TimestampMixin):
     sender_id = Column(Integer, ForeignKey("contacts.id"))
     receiver_id = Column(Integer, ForeignKey("contacts.id"))
     content = Column(Text, nullable=True)
-    attachment_url = Column(String(255), nullable=True)
     is_delivered = Column(Boolean, default=False)
     is_read = Column(Boolean, default=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
