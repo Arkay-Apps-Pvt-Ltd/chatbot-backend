@@ -10,9 +10,7 @@ from dependency import get_current_user
 
 app = FastAPI()
 
-origins = [
-    "*"
-]
+origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,28 +1,11 @@
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
-from typing import Dict
-from app.crud import message as crud_message
+from connection_pool import active_connections
 from models import Contact, User
 from sqlalchemy.orm import Session
 from database import get_db
-from schemas import MessageBase
+from app.services.message_service import handle_outgoing_message
 
 router = APIRouter()
-
-
-@router.websocket("/example")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    await websocket.send_text("Connected to /messages/ws/chat")
-    try:
-        while True:
-            data = await websocket.receive_text()
-            await websocket.send_text(f"Message text was: {data}")
-    except:
-        await websocket.close()
-
-
-# In-memory storage for active connections
-active_connections: Dict[str, WebSocket] = {}
 
 
 @router.websocket("/ws/{user_id}")
@@ -40,14 +23,9 @@ async def websocket_chat(
             msg_type = data.get("type")
 
             if msg_type == "message":
-                message_data = data.get("data", {})
-                sender_id = message_data.get("sender_id")
-                receiver_id = message_data.get("receiver_id")
-                content = message_data.get("content")
-
-                if not all([sender_id, receiver_id, content]):
-                    await websocket.send_json({"error": "Invalid message payload"})
-                    continue
+                sender_id = int(data["data"]["sender_id"])
+                receiver_id = int(data["data"]["receiver_id"])
+                content = data["data"]["content"]
 
                 # Validate receiver
                 receiver = db.query(Contact).filter(Contact.id == receiver_id).first()
@@ -65,13 +43,9 @@ async def websocket_chat(
                     db.query(User.id).filter(User.contact_id == receiver_id).scalar()
                 )
 
-                # Save to database
-                message_create = MessageBase(
-                    sender_id=int(sender_id),
-                    receiver_id=int(receiver_id),
-                    content=content,
+                db_message = await handle_outgoing_message(
+                    db, sender_id, receiver_id, content
                 )
-                db_message = crud_message.create_message(db, message_create)
 
                 # Message response payload (for sender)
                 sender_response = {

@@ -1,24 +1,21 @@
 from fastapi import APIRouter, Request, HTTPException, Depends
 from sqlalchemy.orm import Session
 from datetime import datetime
-from database import SessionLocal  # Ensure you have this or similar function
+from connection_pool import active_connections
+from database import get_db
 from models import Contact, Message
 import phonenumbers
 
-def extract_country_code(wa_id: str):
-    parsed = phonenumbers.parse("+" + wa_id)
-    return str(parsed.country_code)
-
-
-# Dependency to get DB session per request
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 router = APIRouter(tags=["Webhook"])
+
+
+def extract_country_code(wa_id: str):
+    try:
+        parsed = phonenumbers.parse("+" + wa_id)
+        return str(parsed.country_code)
+    except Exception:
+        return ""
+
 
 @router.post("/webhook")
 async def webhook(request: Request, db: Session = Depends(get_db)):
@@ -42,7 +39,9 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
         timestamp = datetime.fromtimestamp(int(message_data["timestamp"]))
 
         # Extract receiver info (your business account)
-        receiver_number = change["metadata"]["display_phone_number"]  # e.g. "15557546242"
+        receiver_number = change["metadata"][
+            "display_phone_number"
+        ]  # e.g. "15557546242"
 
         # Get or create sender contact
         sender = db.query(Contact).filter_by(mobile_number=sender_wa_id).first()
@@ -51,7 +50,7 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
                 name=sender_name,
                 country_code=country_code,
                 mobile_number=sender_wa_id,
-                last_active_at=timestamp
+                last_active_at=timestamp,
             )
             db.add(sender)
             db.commit()
@@ -66,7 +65,7 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
             receiver = Contact(
                 name="Business Number",
                 mobile_number=receiver_number,
-                last_active_at=timestamp
+                last_active_at=timestamp,
             )
             db.add(receiver)
             db.commit()
@@ -77,12 +76,37 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
             sender_id=sender.id,
             receiver_id=receiver.id,
             content=text,
-            timestamp=timestamp
+            timestamp=timestamp,
         )
         db.add(message)
         db.commit()
+        db.refresh(message)
+
+        # Notify receiver via WebSocket (if connected)
+        # You may need to join with User table if Contact doesn't store user_id
+        receiver_user_id = getattr(receiver, "user_id", None)
+        if receiver_user_id:
+            ws = active_connections.get(str(receiver_user_id))
+            if ws:
+                await ws.send_json(
+                    {
+                        "type": "message",
+                        "data": {
+                            "id": message.id,
+                            "content": message.content,
+                            "is_delivered": message.is_delivered,
+                            "is_read": message.is_read,
+                            "direction": "received",
+                            "timestamp": message.timestamp.isoformat(),
+                            "sender_id": sender.id,
+                            "receiver_id": receiver.id,
+                        },
+                    }
+                )
 
         return {"status": "success"}
 
     except KeyError as e:
         return {"status": "error", "message": f"Invalid request format: {str(e)}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

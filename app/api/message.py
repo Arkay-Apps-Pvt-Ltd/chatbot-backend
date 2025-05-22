@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from utils import format_time
 import httpx
 import json
-
+from app.services.message_service import handle_outgoing_message
 
 router = APIRouter(tags=["Messages"])
 
@@ -127,7 +127,7 @@ def get_chat_history(
 
 
 @router.post("/conversations/{receiver_id}/send")
-def send_message(
+async def send_message(
     receiver_id: int,
     message: MessageCreate,
     db: Session = Depends(get_db),
@@ -135,40 +135,7 @@ def send_message(
 ):
     sender_id = current_user.contact_id
 
-    # Fetch receiver contact to get their number
-    receiver_contact = db.query(Contact).filter_by(id=receiver_id).first()
-    if not receiver_contact:
-        raise HTTPException(status_code=404, detail="Receiver contact not found")
-
-    json_message = {"type": "text", "text": message.content}
-    # Prepare payload for Gupshup
-    payload = {
-        "channel": "whatsapp",
-        "source": 15557546242,
-        "destination": receiver_contact.mobile_number,
-        "message": json.dumps(json_message),
-        "src.name": "arkayappsv1",
-    }
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "apikey": "awdxg2aymfgsjcrrrufuvu5y4u1hd5xi",
-    }
-
-    # Send message to Gupshup
-    try:
-        response = httpx.post(
-            "https://api.gupshup.io/sm/api/v1/msg", data=payload, headers=headers
-        )
-        response.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=502, detail=f"Gupshup error: {e.response.text}")
-
-    # Save message to DB after successful API send
-
-    full_message_data = MessageBase(
-        **message.dict(), sender_id=sender_id, receiver_id=receiver_id
-    )
-    db_message = crud_message.create_message(db, full_message_data)
+    db_message = await handle_outgoing_message(db, sender_id, receiver_id, message.content)
 
     return {
         "id": db_message.id,
