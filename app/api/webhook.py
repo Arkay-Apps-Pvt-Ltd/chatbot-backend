@@ -5,6 +5,7 @@ from connection_pool import active_connections
 from database import get_db
 from models import Contact, Message
 import phonenumbers
+from starlette.websockets import WebSocketState
 
 router = APIRouter(tags=["Webhook"])
 
@@ -83,26 +84,26 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
         db.refresh(message)
 
         # Notify receiver via WebSocket (if connected)
-        # You may need to join with User table if Contact doesn't store user_id
-        receiver_user_id = getattr(receiver, "user_id", None)
-        if receiver_user_id:
-            ws = active_connections.get(str(receiver_user_id))
-            if ws:
-                await ws.send_json(
-                    {
-                        "type": "message",
-                        "data": {
-                            "id": message.id,
-                            "content": message.content,
-                            "is_delivered": message.is_delivered,
-                            "is_read": message.is_read,
-                            "direction": "received",
-                            "timestamp": message.timestamp.isoformat(),
-                            "sender_id": sender.id,
-                            "receiver_id": receiver.id,
-                        },
-                    }
-                )
+        receiver_id = receiver.id
+        if receiver_id:
+            websockets = active_connections.get(str(receiver_id), set())
+            for ws in websockets:
+                if ws.application_state == WebSocketState.CONNECTED:
+                    await ws.send_json(
+                        {
+                            "type": "message",
+                            "data": {
+                                "id": message.id,
+                                "content": message.content,
+                                "is_delivered": message.is_delivered,
+                                "is_read": message.is_read,
+                                "direction": "received",
+                                "timestamp": message.timestamp.isoformat(),
+                                "sender_id": sender.id,
+                                "receiver_id": receiver.id,
+                            },
+                        }
+                    )
 
         return {"status": "success"}
 

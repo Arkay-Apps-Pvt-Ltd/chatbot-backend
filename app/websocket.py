@@ -1,21 +1,38 @@
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 from connection_pool import active_connections
-from models import Contact, User
+from models import Contact
 from sqlalchemy.orm import Session
 from database import get_db
 from app.services.message_service import handle_outgoing_message
 
 router = APIRouter()
 
-
-@router.websocket("/ws/{user_id}")
+@router.websocket("/ws")
 async def websocket_chat(
     websocket: WebSocket,
-    user_id: str,
     db: Session = Depends(get_db),
 ):
+    contact_id = websocket.query_params.get("contact_id")
+
+    if not contact_id:
+        await websocket.close(code=1008)
+        return
+
+    try:
+        contact_id = int(contact_id)
+    except ValueError:
+        await websocket.close(code=1008)
+        return
+
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not contact:
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
-    active_connections[user_id] = websocket
+    active_connections[str(contact_id)].add(websocket)
+    print(f"Connected: contact_id={contact_id}")
 
     try:
         while True:
@@ -23,61 +40,62 @@ async def websocket_chat(
             msg_type = data.get("type")
 
             if msg_type == "message":
-                sender_id = int(data["data"]["sender_id"])
+                sender_id = contact_id
                 receiver_id = int(data["data"]["receiver_id"])
                 content = data["data"]["content"]
 
-                # Validate receiver
                 receiver = db.query(Contact).filter(Contact.id == receiver_id).first()
                 if not receiver:
-                    await websocket.send_json(
-                        {
-                            "error": "Receiver contact not found",
-                            "receiver_id": receiver_id,
-                        }
-                    )
+                    await websocket.send_json({
+                        "error": "Receiver contact not found",
+                        "receiver_id": receiver_id,
+                    })
                     continue
-
-                # Fetch receiver's user_id
-                receiver_user_id = (
-                    db.query(User.id).filter(User.contact_id == receiver_id).scalar()
-                )
 
                 db_message = await handle_outgoing_message(
                     db, sender_id, receiver_id, content
                 )
 
-                # Message response payload (for sender)
-                sender_response = {
+                message_payload = {
                     "type": "message",
                     "data": {
                         "id": db_message.id,
                         "content": db_message.content,
                         "is_delivered": db_message.is_delivered,
                         "is_read": db_message.is_read,
-                        "direction": "sent",
                         "timestamp": db_message.timestamp.isoformat(),
                         "sender_id": db_message.sender_id,
                         "receiver_id": db_message.receiver_id,
                     },
                 }
 
-                # Acknowledgment to sender
-                await websocket.send_json(sender_response)
+                # Send to all sender connections
+                for ws in active_connections.get(str(sender_id), set()):
+                    if ws.application_state == WebSocketState.CONNECTED:
+                        sender_response = message_payload.copy()
+                        sender_response["data"]["direction"] = "sent"
+                        await ws.send_json(sender_response)
 
-                # Message to receiver
-                receiver_ws = active_connections.get(str(receiver_user_id))
-                if receiver_ws:
-                    receiver_response = sender_response.copy()
-                    receiver_response["data"]["direction"] = "received"
-                    await receiver_ws.send_json(receiver_response)
+                # Send to all receiver connections
+                for ws in active_connections.get(str(receiver_id), set()):
+                    if ws.application_state == WebSocketState.CONNECTED:
+                        receiver_response = message_payload.copy()
+                        receiver_response["data"]["direction"] = "received"
+                        await ws.send_json(receiver_response)
+
             else:
-                await websocket.send_json(
-                    {"error": f"Unsupported message type: {msg_type}"}
-                )
+                await websocket.send_json({
+                    "error": f"Unsupported message type: {msg_type}"
+                })
 
     except WebSocketDisconnect:
-        active_connections.pop(user_id, None)
+        print(f"Disconnected: contact_id={contact_id}")
+        active_connections[str(contact_id)].discard(websocket)
+        if not active_connections[str(contact_id)]:
+            del active_connections[str(contact_id)]
+
     except Exception as e:
         await websocket.send_json({"error": str(e)})
-        active_connections.pop(user_id, None)
+        active_connections[str(contact_id)].discard(websocket)
+        if not active_connections[str(contact_id)]:
+            del active_connections[str(contact_id)]
