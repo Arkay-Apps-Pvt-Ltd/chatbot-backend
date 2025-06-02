@@ -1,22 +1,18 @@
 from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, constr
 
 
 class UserCreate(BaseModel):
-    first_name: str
-    last_name: str | None = None
+    name: str
     email: str
     password: str
 
 
 class UserOut(BaseModel):
     id: int
-    full_name: str
-    first_name: str
-    last_name: str | None = None
+    name: str
     email: str
-    contact_id: int | None = None
 
     class Config:
         from_attributes = True
@@ -34,64 +30,118 @@ class LoginResponse(BaseModel):
     user: UserOut
 
 
-# Client input (only content)
-class MessageCreate(BaseModel):
-    content: str
-
-# Internal/full data used when saving to DB
-class MessageBase(MessageCreate):
-    sender_id: int
-    receiver_id: int
-
-class TagBase(BaseModel):
-    name: str
-    status: bool = True
+class AppCreate(BaseModel):
+    business_name: str
+    whatsapp_number: str
+    status: bool | None = True
 
 
-class TagCreate(TagBase):
-    pass
-
-class TagStatusUpdate(BaseModel):
-    status: bool
-
-class TagRead(TagBase):
+class AppRead(BaseModel):
     id: int
+    business_name: str
+    whatsapp_number: str
+    is_active: bool
+    is_whatsapp_verified: bool
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
 
+
+class TagCreate(BaseModel):
+    app_id: int  # ✅ Linking tag to app
+    name: str
+    status: bool = True
+
+
+class TagRead(BaseModel):
+    id: int
+    name: str
+    status: bool = True
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TagUpdate(BaseModel):
+    name: str
+    status: bool = True
+
+
+class TagStatusUpdate(BaseModel):
+    status: bool
+
+
 class ContactBase(BaseModel):
     name: str
-    country_code: str = None
-    mobile_number: str
+    app_id: int
+    profile_name: Optional[str] = None
+    country_code: constr(strip_whitespace=True, min_length=1)
+    mobile_number: constr(strip_whitespace=True, min_length=5)
     source: Optional[str] = None
-    status: Optional[bool] = True
+    is_active: Optional[bool] = True
     last_active_at: Optional[datetime] = None
     incoming: Optional[bool] = True
     opted_in: Optional[bool] = True
 
+    class Config:
+        orm_mode = True
+
+
 class ContactCreate(ContactBase):
-    pass
+    tag_ids: Optional[List[str]] = []
+
 
 class ContactUpdate(ContactBase):
-    pass
+    tag_ids: Optional[List[str]] = []
+
 
 class ContactRead(ContactBase):
     id: int
+    wa_id: str
     created_at: datetime
     updated_at: datetime
     tags: List[TagRead] = []
 
     class Config:
-        from_attributes = True
+        orm_mode = True
 
-class ChatItemSchema(BaseModel):
-    contact_id: int
-    name: str
-    avatar: Optional[str]
-    lastMessage: Optional[str]
-    time: Optional[str]
-    unread: int
-    online: bool
+
+class MessageBase(BaseModel):
+    app_id: str
+    from_number: str
+    to_number: str
+    contact_id: Optional[int] = None
+    message_type: str
+    content: Optional[str] = None
+    media_url: Optional[str] = None
+    media_mime_type: Optional[str] = None
+    media_size: Optional[int] = None
+    media_caption: Optional[str] = None
+    location_latitude: Optional[float] = None
+    location_longitude: Optional[float] = None
+    location_name: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    direction: str
+    status: Optional[str] = "sent"
+    sent_at: Optional[datetime] = None
+    received_at: Optional[datetime] = None
+    read_at: Optional[datetime] = None
+
+class MessageCreate(MessageBase):
+    pass
+
+class MessageUpdate(BaseModel):
+    status: Optional[str]
+    read_at: Optional[datetime]
+
+class MessageOut(MessageBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        orm_mode = True

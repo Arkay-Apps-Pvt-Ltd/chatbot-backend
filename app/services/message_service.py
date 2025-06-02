@@ -3,9 +3,8 @@
 import json
 import httpx
 from fastapi import HTTPException
-from models import Contact
+from models import Contact, Message
 from schemas import MessageBase
-from app.crud.message import create_message
 from connection_pool import active_connections
 from starlette.websockets import WebSocketState
 
@@ -42,13 +41,21 @@ async def handle_outgoing_message(db, sender_id, receiver_id, content):
         raise HTTPException(status_code=404, detail="Receiver not found")
     
     # 1. Send via Gupshup
-    await send_message_to_gupshup(receiver_contact, content)
+    # await send_message_to_gupshup(receiver_contact, content)
 
     # 2. Save in DB
     message_data = MessageBase(
         sender_id=sender_id, receiver_id=receiver_id, content=content
     )
-    db_message = create_message(db, message_data)
+
+    db_message = Message(
+        sender_id=message_data.sender_id,
+        receiver_id=message_data.receiver_id,
+        content=message_data.content,
+    )
+    db.add(db_message)
+    db.commit()
+    db.refresh(db_message)
 
     # 3. Notify via WebSocket
     receiver = (

@@ -1,169 +1,235 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Form, UploadFile, File
 from sqlalchemy.orm import Session
 from database import get_db
-from schemas import MessageCreate, ChatItemSchema, MessageBase
-from app.crud import message as crud_message
-from models import Contact, Message
-from sqlalchemy import desc, and_, or_, func
-from app.auth.dependencies import get_current_user
-from datetime import datetime, timedelta
-from utils import format_time
-import httpx
-import json
-from app.services.message_service import handle_outgoing_message
+from models import App, Contact, Message
+from sqlalchemy import func, desc, and_
+from datetime import datetime
+import os
+from utils import human_readable_time_diff
 
 router = APIRouter(tags=["Messages"])
+UPLOAD_DIR = "./uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
-@router.get("/conversations", response_model=list[ChatItemSchema])
-def get_conversations(
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """
-    Get chat contacts with last message info and unread counts for the current user.
-    """
-    current_contact_id = current_user.contact_id
+@router.get("/conversations")
+def get_recent_conversations(app_id: int, db: Session = Depends(get_db)):
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
 
-    # Get contact IDs that have exchanged messages with current user
-    contact_ids = (
-        db.query(Message.sender_id)
-        .filter(Message.receiver_id == current_contact_id)
-        .union(
-            db.query(Message.receiver_id).filter(
-                Message.sender_id == current_contact_id
-            )
+    subq = (
+        db.query(Message.contact_id, func.max(Message.sent_at).label("last_sent_at"))
+        .filter(Message.app_id == app_id)
+        .group_by(Message.contact_id)
+        .subquery()
+    )
+
+    last_messages = (
+        db.query(
+            Message,
+            Contact.name.label("contact_name"),
+            Contact.wa_id.label("contact_number"),
         )
-        .distinct()
+        .join(
+            subq,
+            and_(
+                Message.contact_id == subq.c.contact_id,
+                Message.sent_at == subq.c.last_sent_at,
+            ),
+        )
+        .join(Contact, Contact.id == Message.contact_id)
+        .order_by(desc(Message.sent_at))
         .all()
     )
 
-    # Flatten list of tuples
-    contact_ids = [id[0] for id in contact_ids]
+    # Prepare response
+    conversations = []
+    for msg, contact_name, contact_number in last_messages:
+        display_name = contact_name or contact_number
+        time_display = human_readable_time_diff(msg.sent_at)
 
-    # Query contact details
-    contacts = db.query(Contact).filter(Contact.id.in_(contact_ids)).all()
-
-    chat_items = []
-
-    for contact in contacts:
-        # Get last message between current user and this contact
-        last_msg = (
-            db.query(Message)
-            .filter(
-                or_(
-                    and_(
-                        Message.sender_id == current_contact_id,
-                        Message.receiver_id == contact.id,
-                    ),
-                    and_(
-                        Message.sender_id == contact.id,
-                        Message.receiver_id == current_contact_id,
-                    ),
-                )
-            )
-            .order_by(desc(Message.timestamp))
-            .first()
+        conversations.append(
+            {
+                "contact_number": contact_number,
+                "contact_name": display_name,
+                "last_message_type": msg.message_type,
+                "last_message": (
+                    msg.content if msg.message_type == "text" else f"[{msg.message_type}]"
+                ),
+                "last_message_time": time_display,
+            }
         )
 
-        if not last_msg:
-            continue
-
-        # Count unread messages sent by contact to current user
-        unread_count = (
-            db.query(func.count(Message.id))
-            .filter(
-                Message.sender_id == contact.id,
-                Message.receiver_id == current_contact_id,
-                Message.is_read == False,
-            )
-            .scalar()
-        )
-
-        chat_items.append(
-            ChatItemSchema(
-                contact_id=contact.id,
-                name=contact.name,
-                avatar=getattr(contact, "avatar_url", None),
-                lastMessage=last_msg.content,
-                time=format_time(last_msg.timestamp),
-                unread=unread_count,
-                online=contact.last_active_at is not None
-                and (datetime.utcnow() - contact.last_active_at) < timedelta(minutes=5),
-            )
-        )
-
-    return chat_items
+    return conversations
 
 
-@router.get("/conversations/{receiver_id}/messages")
-def get_chat_history(
-    receiver_id: int,
-    skip: int = Query(0),
-    limit: int = Query(50),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+@router.get("/messages/{contact_number}")
+def get_messages_by_contact(
+    app_id: int, contact_number: str, db: Session = Depends(get_db)
 ):
-    """
-    Get chat message history between current user and another contact.
-    """
-    sender_id = current_user.contact_id
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
 
-    messages = crud_message.get_chat_messages(
-        db, sender_id, receiver_id, skip, limit
+    return (
+        db.query(Message)
+        .filter(
+            Message.app_id == app_id,
+            (
+                (Message.from_number == contact_number)
+                | (Message.to_number == contact_number)
+            ),
+        )
+        .order_by(Message.created_at.desc())
+        .all()
     )
 
-    return [
-        {
-            "id": msg.id,
-            "content": msg.content,
-            "is_delivered": msg.is_delivered,
-            "is_read": msg.is_read,
-            "direction": "sent" if msg.sender_id == sender_id else "received",
-            "timestamp": msg.timestamp.isoformat(),
-        }
-        for msg in reversed(messages)  # ascending order
-    ]
 
-
-@router.post("/conversations/{receiver_id}/send")
-async def send_message(
-    receiver_id: int,
-    message: MessageCreate,
+@router.post("/messages")
+async def create_message(
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    # Support multipart/form-data for media messages
+    app_id: int = Form(None),
+    to_number: str = Form(None),
+    message_type: str = Form(None),
+    content: str = Form(None),
+    media_caption: str = Form(None),
+    location_latitude: float = Form(None),
+    location_longitude: float = Form(None),
+    location_name: str = Form(None),
+    contact_name: str = Form(None),
+    contact_phone: str = Form(None),
+    file: UploadFile = File(None),
 ):
-    sender_id = current_user.contact_id
-
-    db_message = await handle_outgoing_message(db, sender_id, receiver_id, message.content)
-
-    return {
-        "id": db_message.id,
-        "content": db_message.content,
-        "is_delivered": db_message.is_delivered,
-        "is_read": db_message.is_read,
-        "direction": "sent" if db_message.sender_id == sender_id else "received",
-        "timestamp": db_message.timestamp.isoformat(),
+    data = {
+        "app_id": app_id,
+        "to_number": to_number,
+        "message_type": message_type,
+        "content": content,
+        "media_caption": media_caption,
+        "location_latitude": location_latitude,
+        "location_longitude": location_longitude,
+        "location_name": location_name,
+        "contact_name": contact_name,
+        "contact_phone": contact_phone,
     }
 
+    allowed_types = {
+        "image": ["image/jpeg", "image/png"],
+        "video": ["video/mp4"],
+        "audio": ["audio/mpeg", "audio/ogg"],
+        "document": ["application/pdf", "application/msword"],
+        "sticker": ["image/webp"],
+    }
 
-@router.get("/conversations/{msg_id}/mark-delivered")
+    # Validate app
+    db_app = db.query(App).filter(App.id == data["app_id"]).first()
+    if not db_app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    # Fetch Contact IDs
+    db_contact = db.query(Contact).filter(Contact.wa_id == data["to_number"]).first()
+
+    # Initialize media fields
+    media_url, media_mime_type, media_size = None, None, None
+
+    # Handle media upload
+    if file:
+        if data["message_type"] not in allowed_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported message_type: {data['message_type']}",
+            )
+
+        if file.content_type not in allowed_types[data["message_type"]]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file type {file.content_type} for {data['message_type']}",
+            )
+
+        contents = await file.read()
+        media_size = len(contents)
+        max_size = 10 * 1024 * 1024  # 10MB limit
+        if media_size > max_size:
+            raise HTTPException(status_code=400, detail="File size exceeds 10MB limit")
+
+        filename = f"{datetime.utcnow().timestamp()}_{file.filename}"
+        filepath = os.path.join(UPLOAD_DIR, filename)
+        with open(filepath, "wb") as f:
+            f.write(contents)
+        media_url = f"/uploads/{filename}"
+        media_mime_type = file.content_type
+
+    # Validate fields
+    if data["message_type"] == "text" and not data.get("content"):
+        raise HTTPException(status_code=400, detail="Text message requires content")
+    elif data["message_type"] == "location" and not (
+        data.get("location_latitude") and data.get("location_longitude")
+    ):
+        raise HTTPException(
+            status_code=400, detail="Location message requires latitude and longitude"
+        )
+    elif data["message_type"] == "contact" and not (
+        data.get("contact_name") and data.get("contact_phone")
+    ):
+        raise HTTPException(
+            status_code=400, detail="Contact message requires name and phone"
+        )
+    elif data["message_type"] in allowed_types and not file:
+        raise HTTPException(
+            status_code=400, detail=f"{data['message_type']} message requires a file"
+        )
+
+    # Create message
+    db_msg = Message(
+        app_id=db_app.id,
+        contact_id=db_contact.id,
+        from_number=db_app.whatsapp_number,
+        to_number=data["to_number"],
+        message_type=data["message_type"],
+        content=data.get("content"),
+        media_url=media_url,
+        media_mime_type=media_mime_type,
+        media_size=media_size,
+        media_caption=data.get("media_caption"),
+        location_latitude=data.get("location_latitude"),
+        location_longitude=data.get("location_longitude"),
+        location_name=data.get("location_name"),
+        contact_name=data.get("contact_name"),
+        contact_phone=data.get("contact_phone"),
+        direction="outbound",
+        status="sent",
+        sent_at=datetime.utcnow(),
+        received_at=None,
+        read_at=None,
+    )
+    db.add(db_msg)
+    db.commit()
+    db.refresh(db_msg)
+
+    return {"message_id": db_msg.id, "status": "created"}
+
+
+@router.get("/messages/{msg_id}/mark-delivered")
 def mark_message_delivered(msg_id: int, db: Session = Depends(get_db)):
-    """
-    Mark a message as delivered.
-    """
-    success = crud_message.mark_as_delivered(db, msg_id)
-    if not success:
+    msg = db.query(Message).filter(Message.id == msg_id).first()
+    if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
+
+    msg.status = "delivered"
+    msg.received_at = datetime.utcnow()
+    db.commit()
     return {"status": "delivered", "message_id": msg_id}
 
 
-@router.get("/conversations/{msg_id}/mark-read")
+@router.get("/messages/{msg_id}/mark-read")
 def mark_message_read(msg_id: int, db: Session = Depends(get_db)):
-    """
-    Mark a message as read.
-    """
-    success = crud_message.mark_as_read(db, msg_id)
-    if not success:
+    msg = db.query(Message).filter(Message.id == msg_id).first()
+    if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
+
+    msg.status = "read"
+    msg.read_at = datetime.utcnow()
+    db.commit()
     return {"status": "read", "message_id": msg_id}

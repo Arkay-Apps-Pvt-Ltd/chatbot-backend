@@ -1,79 +1,145 @@
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Table
+    Column,
+    Integer,
+    String,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Text,
+    Table,
+    Enum,
+    BigInteger,
+    Double,
 )
 from sqlalchemy.orm import relationship
-from database import Base
 from datetime import datetime
+from database import Base
 
-
-class TimestampMixin:
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    is_deleted = Column(Boolean, default=False)
-
-
-# Association table for many-to-many Contact <-> Tag
+# Association table for many-to-many relationship between Contact and Tag
 contact_tags = Table(
-    'contact_tags',
+    "contact_tags",
     Base.metadata,
-    Column('contact_id', Integer, ForeignKey('contacts.id'), primary_key=True),
-    Column('tag_id', Integer, ForeignKey('tags.id'), primary_key=True)
+    Column("contact_id", Integer, ForeignKey("contacts.id"), primary_key=True),
+    Column("tag_id", Integer, ForeignKey("tags.id"), primary_key=True),
 )
 
 
-class Contact(Base, TimestampMixin):
-    __tablename__ = "contacts"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)
-    country_code = Column(String(20), nullable=False)
-    mobile_number = Column(String(20), nullable=False, index=True)
-    source = Column(String(50), nullable=True)
-    status = Column(Boolean, default=True)
-    last_active_at = Column(DateTime, nullable=True)
-    incoming = Column(Boolean, default=True)
-    opted_in = Column(Boolean, default=True)
-
-    tags = relationship("Tag", secondary=contact_tags, back_populates="contacts")
-
-    sent_messages = relationship("Message", foreign_keys='Message.sender_id', back_populates="sender")
-    received_messages = relationship("Message", foreign_keys='Message.receiver_id', back_populates="receiver")
-
-
-class Tag(Base, TimestampMixin):
-    __tablename__ = "tags"
-
-    id = Column(Integer, primary_key=True)
-    name = Column(String(50), unique=True, nullable=False)
-    status = Column(Boolean, default=True)
-
-    contacts = relationship("Contact", secondary=contact_tags, back_populates="tags")
-
-
-class User(Base, TimestampMixin):
+class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    first_name = Column(String(50), nullable=False)
-    last_name = Column(String(50), nullable=True)
-    full_name = Column(String(100), nullable=False)
+    name = Column(String(50), nullable=True)
     email = Column(String(100), unique=True, index=True, nullable=False)
-    password = Column(String(255), nullable=False)  # hashed password
+    password = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at = Column(DateTime, nullable=True)
 
-    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
-    contact = relationship("Contact", backref="users")
+
+class App(Base):
+    __tablename__ = "apps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    business_name = Column(String(255), nullable=False)
+    whatsapp_number = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=False, nullable=False)
+    is_whatsapp_verified = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at = Column(DateTime, nullable=True)
 
 
-class Message(Base, TimestampMixin):
-    __tablename__ = "messages"
+class Tag(Base):
+    __tablename__ = "tags"
 
     id = Column(Integer, primary_key=True)
-    sender_id = Column(Integer, ForeignKey("contacts.id"))
-    receiver_id = Column(Integer, ForeignKey("contacts.id"))
-    content = Column(Text, nullable=True)
-    is_delivered = Column(Boolean, default=False)
-    is_read = Column(Boolean, default=False)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    app_id = Column(Integer, ForeignKey("apps.id"), nullable=False, index=True)
+    name = Column(String(50), nullable=False)
+    status = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    sender = relationship("Contact", foreign_keys=[sender_id], back_populates="sent_messages")
-    receiver = relationship("Contact", foreign_keys=[receiver_id], back_populates="received_messages")
+    # ✅ Define back relationship to Contact
+    contacts = relationship("Contact", secondary=contact_tags, back_populates="tags")
+
+
+class Contact(Base):
+    __tablename__ = "contacts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    app_id = Column(Integer, ForeignKey("apps.id"), nullable=False, index=True)
+    country_code = Column(String(10), nullable=False)  # 📌 "91"
+    mobile_number = Column(String(20), nullable=False)  # 📌 "7990152399"
+    wa_id = Column(
+        String(20), nullable=False, index=True
+    )  # 📌 "917990152399" (country_code+mobile_number)
+    name = Column(String(100), nullable=True)
+    profile_name = Column(String(100), nullable=True)
+    source = Column(String(50), nullable=True)
+    is_active = Column(Boolean, default=True)
+    last_active_at = Column(DateTime, nullable=True)
+    incoming = Column(Boolean, default=True)
+    opted_in = Column(Boolean, default=True)
+    language = Column(String(10), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # 🔥 Add this relationship
+    tags = relationship("Tag", secondary=contact_tags, back_populates="contacts")
+
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    app_id = Column(Integer, ForeignKey("apps.id"), nullable=False, index=True)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=False, index=True)
+
+    # WhatsApp-specific fields
+    from_number = Column(String(20), nullable=False, index=True)
+    to_number = Column(String(20), nullable=False, index=True)
+
+    message_type = Column(
+        Enum(
+            "text",
+            "image",
+            "video",
+            "audio",
+            "document",
+            "location",
+            "contact",
+            "sticker",
+            "reaction",
+            "system",
+            name="message_type_enum",
+        ),
+        nullable=False,
+    )
+
+    # Payload fields
+    content = Column(Text, nullable=True)  # For text messages
+    media_url = Column(String(255), nullable=True)
+    media_mime_type = Column(String(100), nullable=True)
+    media_size = Column(BigInteger, nullable=True)
+    media_caption = Column(Text, nullable=True)
+    location_latitude = Column(Double, nullable=True)
+    location_longitude = Column(Double, nullable=True)
+    location_name = Column(String(255), nullable=True)
+    contact_name = Column(String(100), nullable=True)
+    contact_phone = Column(String(20), nullable=True)
+
+    direction = Column(
+        Enum("inbound", "outbound", name="message_direction_enum"), nullable=False
+    )
+    status = Column(
+        Enum("sent", "delivered", "read", "failed", name="message_status_enum"),
+        nullable=False,
+        server_default="sent",
+    )
+
+    sent_at = Column(DateTime, nullable=True)
+    received_at = Column(DateTime, nullable=True)
+    read_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)

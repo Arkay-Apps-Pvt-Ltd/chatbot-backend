@@ -32,9 +32,7 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
 
     hashed_pw = hash_password(user.password)
     db_user = User(
-        first_name=user.first_name,
-        last_name=user.last_name,
-        full_name = f"{user.first_name} {user.last_name or ''}".strip(),
+        name=user.name,
         email=user.email,
         password=hashed_pw,
     )
