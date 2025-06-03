@@ -5,6 +5,16 @@ from database import get_db
 from models import App, Contact, Message
 import phonenumbers
 from phonenumbers import geocoder
+import json
+
+from app.crud.message import (
+    get_recent_conversations_ws,
+    get_contact_by_by_id_ws,
+    get_messages_by_contact_ws,
+    handle_send_message
+)
+
+from app.websocket import broadcast_to_app
 
 router = APIRouter(tags=["Webhook"])
 
@@ -101,31 +111,16 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
             db, db_app.id, sender_wa_id, local_number, sender_name, country_info
         )
 
-        # Prepare message content
-        content = ""
-        media_url = None
-        media_mime_type = None
-        media_caption = None
-        if message_type == "text":
-            content = message_data.get("text", {}).get("body", "")
-        elif message_type in ["image", "video", "audio", "document", "sticker"]:
-            media = message_data.get(message_type, {})
-            media_url = media.get("link")
-            media_mime_type = media.get("mime_type")
-            media_caption = media.get("caption", "")
-        # More types can be handled here...
+        payload = message_data.get(message_type, [])
 
         # Create Message entry
         message = Message(
             app_id=db_app.id,
+            contact_id=sender.id,
             from_number=sender_wa_id,
             to_number=receiver_number,
-            contact_id=sender.id,
             message_type=message_type,
-            content=content,
-            media_url=media_url,
-            media_mime_type=media_mime_type,
-            media_caption=media_caption,
+            payload=payload,
             direction="inbound",
             status="sent",
             received_at=timestamp,
@@ -134,6 +129,12 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
         db.add(message)
         db.commit()
         db.refresh(message)
+
+        # Prepare payloads for broadcasting
+        conversations = await get_recent_conversations_ws(db, db_app.id)
+
+        result = await get_recent_conversations_ws(db, db_app.id)
+        await broadcast_to_app(db_app.id, result)
 
         return {"status": "success", "message_id": message.id}
 

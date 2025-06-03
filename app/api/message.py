@@ -6,10 +6,41 @@ from sqlalchemy import func, desc, and_
 from datetime import datetime
 import os
 from utils import human_readable_time_diff
+from schemas import MessageCreate
+from fastapi.responses import JSONResponse
+import uuid
+import shutil
+from config import config
 
 router = APIRouter(tags=["Messages"])
 UPLOAD_DIR = "./uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+@router.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    try:
+        # Generate a unique filename to avoid conflicts
+        ext = os.path.splitext(file.filename)[1]
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+        file_path = os.path.join(UPLOAD_DIR, unique_name)
+
+        # Save file to disk
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        file_url = f"{config['base_url']}/uploads/{unique_name}"
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "filename": unique_name,
+                "original_filename": file.filename,
+                "url": file_url,  # You can change this as per how you serve static files
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/conversations")
@@ -29,7 +60,7 @@ def get_recent_conversations(app_id: int, db: Session = Depends(get_db)):
         db.query(
             Message,
             Contact.name.label("contact_name"),
-            Contact.wa_id.label("contact_number"),
+            Contact.wa_id.label("wa_id"),
         )
         .join(
             subq,
@@ -45,18 +76,15 @@ def get_recent_conversations(app_id: int, db: Session = Depends(get_db)):
 
     # Prepare response
     conversations = []
-    for msg, contact_name, contact_number in last_messages:
-        display_name = contact_name or contact_number
+    for msg, contact_name, wa_id in last_messages:
+        display_name = contact_name or wa_id
         time_display = human_readable_time_diff(msg.sent_at)
 
         conversations.append(
             {
-                "contact_number": contact_number,
+                "wa_id": wa_id,
                 "contact_name": display_name,
                 "last_message_type": msg.message_type,
-                "last_message": (
-                    msg.content if msg.message_type == "text" else f"[{msg.message_type}]"
-                ),
                 "last_message_time": time_display,
             }
         )
@@ -88,122 +116,43 @@ def get_messages_by_contact(
 
 @router.post("/messages")
 async def create_message(
+    message_in: MessageCreate,
     db: Session = Depends(get_db),
-    # Support multipart/form-data for media messages
-    app_id: int = Form(None),
-    to_number: str = Form(None),
-    message_type: str = Form(None),
-    content: str = Form(None),
-    media_caption: str = Form(None),
-    location_latitude: float = Form(None),
-    location_longitude: float = Form(None),
-    location_name: str = Form(None),
-    contact_name: str = Form(None),
-    contact_phone: str = Form(None),
-    file: UploadFile = File(None),
 ):
-    data = {
-        "app_id": app_id,
-        "to_number": to_number,
-        "message_type": message_type,
-        "content": content,
-        "media_caption": media_caption,
-        "location_latitude": location_latitude,
-        "location_longitude": location_longitude,
-        "location_name": location_name,
-        "contact_name": contact_name,
-        "contact_phone": contact_phone,
-    }
-
-    allowed_types = {
-        "image": ["image/jpeg", "image/png"],
-        "video": ["video/mp4"],
-        "audio": ["audio/mpeg", "audio/ogg"],
-        "document": ["application/pdf", "application/msword"],
-        "sticker": ["image/webp"],
-    }
-
     # Validate app
-    db_app = db.query(App).filter(App.id == data["app_id"]).first()
+    db_app = db.query(App).filter(App.id == message_in.app_id).first()
     if not db_app:
         raise HTTPException(status_code=404, detail="App not found")
 
-    # Fetch Contact IDs
-    db_contact = db.query(Contact).filter(Contact.wa_id == data["to_number"]).first()
+    # Validate contact
+    db_contact = db.query(Contact).filter(Contact.wa_id == message_in.to_number).first()
+    if not db_contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
 
-    # Initialize media fields
-    media_url, media_mime_type, media_size = None, None, None
+    # Validate payload type matches message_type
+    payload_type = message_in.message_type
+    if not payload_type:
+        raise HTTPException(status_code=400, detail="Payload must include 'type' field")
 
-    # Handle media upload
-    if file:
-        if data["message_type"] not in allowed_types:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported message_type: {data['message_type']}",
-            )
-
-        if file.content_type not in allowed_types[data["message_type"]]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid file type {file.content_type} for {data['message_type']}",
-            )
-
-        contents = await file.read()
-        media_size = len(contents)
-        max_size = 10 * 1024 * 1024  # 10MB limit
-        if media_size > max_size:
-            raise HTTPException(status_code=400, detail="File size exceeds 10MB limit")
-
-        filename = f"{datetime.utcnow().timestamp()}_{file.filename}"
-        filepath = os.path.join(UPLOAD_DIR, filename)
-        with open(filepath, "wb") as f:
-            f.write(contents)
-        media_url = f"/uploads/{filename}"
-        media_mime_type = file.content_type
-
-    # Validate fields
-    if data["message_type"] == "text" and not data.get("content"):
-        raise HTTPException(status_code=400, detail="Text message requires content")
-    elif data["message_type"] == "location" and not (
-        data.get("location_latitude") and data.get("location_longitude")
-    ):
+    if payload_type != message_in.message_type:
         raise HTTPException(
-            status_code=400, detail="Location message requires latitude and longitude"
-        )
-    elif data["message_type"] == "contact" and not (
-        data.get("contact_name") and data.get("contact_phone")
-    ):
-        raise HTTPException(
-            status_code=400, detail="Contact message requires name and phone"
-        )
-    elif data["message_type"] in allowed_types and not file:
-        raise HTTPException(
-            status_code=400, detail=f"{data['message_type']} message requires a file"
+            status_code=400,
+            detail=f"Payload type '{payload_type}' does not match message_type '{message_in.message_type}'",
         )
 
-    # Create message
+    # Build message record
     db_msg = Message(
         app_id=db_app.id,
         contact_id=db_contact.id,
         from_number=db_app.whatsapp_number,
-        to_number=data["to_number"],
-        message_type=data["message_type"],
-        content=data.get("content"),
-        media_url=media_url,
-        media_mime_type=media_mime_type,
-        media_size=media_size,
-        media_caption=data.get("media_caption"),
-        location_latitude=data.get("location_latitude"),
-        location_longitude=data.get("location_longitude"),
-        location_name=data.get("location_name"),
-        contact_name=data.get("contact_name"),
-        contact_phone=data.get("contact_phone"),
+        to_number=message_in.to_number,
+        message_type=message_in.message_type,
+        payload=message_in.payload,
         direction="outbound",
         status="sent",
         sent_at=datetime.utcnow(),
-        received_at=None,
-        read_at=None,
     )
+
     db.add(db_msg)
     db.commit()
     db.refresh(db_msg)

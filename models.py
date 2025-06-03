@@ -10,6 +10,7 @@ from sqlalchemy import (
     Enum,
     BigInteger,
     Double,
+    JSON,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -93,12 +94,13 @@ class Message(Base):
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, index=True)
-    app_id = Column(Integer, ForeignKey("apps.id"), nullable=False, index=True)
-    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=False, index=True)
+    app_id = Column(Integer, ForeignKey("apps.id"), nullable=False)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=False)
 
     # WhatsApp-specific fields
-    from_number = Column(String(20), nullable=False, index=True)
-    to_number = Column(String(20), nullable=False, index=True)
+    # message_id = Column(String(100), nullable=False, unique=True)
+    from_number = Column(String(20), nullable=False)
+    to_number = Column(String(20), nullable=False)
 
     message_type = Column(
         Enum(
@@ -108,7 +110,7 @@ class Message(Base):
             "audio",
             "document",
             "location",
-            "contact",
+            "contacts",
             "sticker",
             "reaction",
             "system",
@@ -117,17 +119,7 @@ class Message(Base):
         nullable=False,
     )
 
-    # Payload fields
-    content = Column(Text, nullable=True)  # For text messages
-    media_url = Column(String(255), nullable=True)
-    media_mime_type = Column(String(100), nullable=True)
-    media_size = Column(BigInteger, nullable=True)
-    media_caption = Column(Text, nullable=True)
-    location_latitude = Column(Double, nullable=True)
-    location_longitude = Column(Double, nullable=True)
-    location_name = Column(String(255), nullable=True)
-    contact_name = Column(String(100), nullable=True)
-    contact_phone = Column(String(20), nullable=True)
+    payload = Column(JSON, nullable=False)  # Store full 'messages' JSON here
 
     direction = Column(
         Enum("inbound", "outbound", name="message_direction_enum"), nullable=False

@@ -9,6 +9,7 @@ from app.api.webhook import router as webhook_route
 from app.api.template import router as template_route
 from app.websocket import router as websocket
 from dependency import get_current_user
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 
@@ -21,6 +22,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve the ./uploads folder at /uploads URL
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 app.include_router(auth_route)
 app.include_router(apps_route, dependencies=[Depends(get_current_user)])

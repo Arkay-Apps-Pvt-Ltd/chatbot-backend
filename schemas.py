@@ -1,6 +1,10 @@
-from typing import List, Optional
+from typing import Union, Dict, List, Any, Optional
 from datetime import datetime
 from pydantic import BaseModel, constr
+import json
+
+from typing import Any
+from enum import Enum
 
 
 class UserCreate(BaseModel):
@@ -88,7 +92,7 @@ class ContactBase(BaseModel):
     opted_in: Optional[bool] = True
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ContactCreate(ContactBase):
@@ -107,41 +111,23 @@ class ContactRead(ContactBase):
     tags: List[TagRead] = []
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
-class MessageBase(BaseModel):
-    app_id: str
-    from_number: str
+class MessageType(str, Enum):
+    text = "text"
+    image = "image"
+    video = "video"
+    audio = "audio"
+    document = "document"
+    location = "location"
+    contacts = "contacts"
+    sticker = "sticker"
+    reaction = "reaction"
+    system = "system"
+
+class MessageCreate(BaseModel):
+    app_id: int
     to_number: str
-    contact_id: Optional[int] = None
-    message_type: str
-    content: Optional[str] = None
-    media_url: Optional[str] = None
-    media_mime_type: Optional[str] = None
-    media_size: Optional[int] = None
-    media_caption: Optional[str] = None
-    location_latitude: Optional[float] = None
-    location_longitude: Optional[float] = None
-    location_name: Optional[str] = None
-    contact_name: Optional[str] = None
-    contact_phone: Optional[str] = None
-    direction: str
-    status: Optional[str] = "sent"
-    sent_at: Optional[datetime] = None
-    received_at: Optional[datetime] = None
-    read_at: Optional[datetime] = None
-
-class MessageCreate(MessageBase):
-    pass
-
-class MessageUpdate(BaseModel):
-    status: Optional[str]
-    read_at: Optional[datetime]
-
-class MessageOut(MessageBase):
-    id: int
-    created_at: datetime
-
-    class Config:
-        orm_mode = True
+    message_type: MessageType
+    payload: Union[Dict[str, Any], List[Any]]

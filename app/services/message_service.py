@@ -1,88 +1,59 @@
-# services/message_service.py
-
-import json
 import httpx
 from fastapi import HTTPException
-from models import Contact, Message
-from schemas import MessageBase
-from connection_pool import active_connections
-from starlette.websockets import WebSocketState
+import json
 
-GUPSHUP_URL = "https://api.gupshup.io/sm/api/v1/msg"
+from models import Message
+
+GUPSHUP_API_URL = "https://api.gupshup.io/sm/api/v1/msg"
 GUPSHUP_SOURCE = "15557546242"
 GUPSHUP_APP_NAME = "arkayappsv1"
-GUPSHUP_APIKEY = "awdxg2aymfgsjcrrrufuvu5y4u1hd5xi"
+GUPSHUP_API_KEY = "awdxg2aymfgsjcrrrufuvu5y4u1hd5xi"
 
-async def send_message_to_gupshup(receiver_contact, message_text):
-    json_message = {"type": "text", "text": message_text}
+async def send_message_via_gupshup(message: Message):
+    # Prepare common fields
     payload = {
         "channel": "whatsapp",
-        "source": GUPSHUP_SOURCE,
-        "destination": receiver_contact.mobile_number,
-        "message": json.dumps(json_message),
+        "source": GUPSHUP_SOURCE,  # your business whatsapp number
+        "destination": message.to_number,  # recipient number
         "src.name": GUPSHUP_APP_NAME,
     }
+
+    # Build message body depending on type
+    if message.message_type == "text":
+        message_data = {
+            "type": "text",
+            "text": message.payload.get("body") if isinstance(message.payload, dict) else str(message.payload)
+        }
+    elif message.message_type == "contacts":
+        # Ensure payload is list of contacts
+        message_data = {
+            "type": "contacts",
+            "contacts": message.payload
+        }
+    elif message.message_type == "image":
+        message_data = {
+            "type": "image",
+            "image": {
+                "url": message.payload.get("url"),
+                "caption": message.payload.get("caption", "")
+            }
+        }
+    else:
+        # Add other types if needed
+        raise ValueError(f"Unsupported message type: {message.message_type}")
+    
+    # ✅ Gupshup requires `message` as a JSON string
+    payload["message"] = json.dumps(message_data)
+
     headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "apikey": GUPSHUP_APIKEY,
+        "Content-Type": "application/x-www-form-urlencoded",  # Gupshup requires this
+        "apikey": GUPSHUP_API_KEY,
     }
 
+    print("Sending to Gupshup:", payload)
+    
     try:
-        response = httpx.post(GUPSHUP_URL, data=payload, headers=headers)
+        response = httpx.post(GUPSHUP_API_URL, data=payload, headers=headers)
         response.raise_for_status()
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"Gupshup error: {e.response.text}")
-
-
-async def handle_outgoing_message(db, sender_id, receiver_id, content):
-    # Get receiver contact
-    receiver_contact = db.query(Contact).filter_by(id=receiver_id).first()
-    if not receiver_contact:
-        raise HTTPException(status_code=404, detail="Receiver not found")
-    
-    # 1. Send via Gupshup
-    # await send_message_to_gupshup(receiver_contact, content)
-
-    # 2. Save in DB
-    message_data = MessageBase(
-        sender_id=sender_id, receiver_id=receiver_id, content=content
-    )
-
-    db_message = Message(
-        sender_id=message_data.sender_id,
-        receiver_id=message_data.receiver_id,
-        content=message_data.content,
-    )
-    db.add(db_message)
-    db.commit()
-    db.refresh(db_message)
-
-    # 3. Notify via WebSocket
-    receiver = (
-        db.query(Contact)  # adjust if `user_id` is from another table
-        .filter(Contact.id == receiver_id)
-        .first()
-    )
-
-    receiver_id = receiver.id
-    if receiver_id:
-        websockets = active_connections.get(str(receiver_id), set())
-        for ws in websockets:
-            if ws.application_state == WebSocketState.CONNECTED:
-                await ws.send_json(
-                    {
-                        "type": "message",
-                        "data": {
-                            "id": db_message.id,
-                            "content": db_message.content,
-                            "is_delivered": db_message.is_delivered,
-                            "is_read": db_message.is_read,
-                            "direction": "received",
-                            "timestamp": db_message.timestamp.isoformat(),
-                            "sender_id": sender_id,
-                            "receiver_id": receiver_id,
-                        },
-                    }
-                )
-
-    return db_message

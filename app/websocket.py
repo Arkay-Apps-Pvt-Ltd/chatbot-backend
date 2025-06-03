@@ -3,6 +3,7 @@ from connection_pool import active_connections
 from models import App, Contact
 from sqlalchemy.orm import Session
 from database import get_db
+from schemas import MessageCreate
 
 from app.crud.message import (
     get_recent_conversations_ws,
@@ -70,12 +71,21 @@ async def websocket_chat(websocket: WebSocket, db: Session = Depends(get_db)):
                 await websocket.send_json(result)
 
             elif type == "send_message":
-                data = data.get("payload")
+                to_number = data.get("to_number")
+                message_type = data.get("message_type")
+                payload = data.get("payload")
                 if not data:
                     await websocket.send_json({"error": "Missing message payload"})
                     continue
 
-                result = await handle_send_message(db, int(app_id), data)
+                message_in = MessageCreate(
+                    app_id=app_id,
+                    to_number=to_number,
+                    message_type=message_type,
+                    payload=payload,
+                )
+
+                result = await handle_send_message(db, message_in)
                 await websocket.send_json(result)
 
             else:
