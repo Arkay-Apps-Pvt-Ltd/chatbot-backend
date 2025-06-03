@@ -38,7 +38,6 @@ def upgrade() -> None:
     sa.Column('user_id', sa.Integer(), nullable=False),
     sa.Column('whatsapp_number', sa.String(length=255), nullable=False),
     sa.Column('business_name', sa.String(length=255), nullable=False),
-    sa.Column('phone_number_id', sa.String(length=255), nullable=False),
     sa.Column('status', sa.Boolean(), nullable=False),
     sa.Column('is_whatsapp_verified', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=True),

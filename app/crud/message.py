@@ -67,6 +67,8 @@ async def get_contact_by_by_id_ws(db: Session, app_id: int, wa_id: str):
         .filter(Contact.app_id == app_id, Contact.wa_id == wa_id)
         .first()
     )
+    if not contact:
+        return {"error": "Contact not found", "messages": []}
 
     return {
         "type": "contact",

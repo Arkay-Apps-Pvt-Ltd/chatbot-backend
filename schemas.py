@@ -37,7 +37,6 @@ class LoginResponse(BaseModel):
 class AppCreate(BaseModel):
     business_name: str
     whatsapp_number: str
-    status: bool | None = True
 
 
 class AppRead(BaseModel):

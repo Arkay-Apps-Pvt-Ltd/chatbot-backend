@@ -59,8 +59,6 @@ def get_or_create_contact(
             mobile_number=local_number,
             country_code=country_info["country_code"],
             name=name,
-            country_iso=country_info["country_iso"],
-            country_name=country_info["country_name"],
             last_active_at=datetime.utcnow(),
         )
         db.add(contact)
@@ -123,18 +121,18 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
             payload=payload,
             direction="inbound",
             status="sent",
-            received_at=timestamp,
+            sent_at=timestamp,
             created_at=datetime.utcnow(),
         )
         db.add(message)
         db.commit()
         db.refresh(message)
 
-        # Prepare payloads for broadcasting
-        conversations = await get_recent_conversations_ws(db, db_app.id)
-
         result = await get_recent_conversations_ws(db, db_app.id)
         await broadcast_to_app(db_app.id, result)
+
+        msg_result = await get_messages_by_contact_ws(db, db_app.id, sender_wa_id)
+        await broadcast_to_app(db_app.id, msg_result)
 
         return {"status": "success", "message_id": message.id}
 
